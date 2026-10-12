@@ -1,30 +1,76 @@
-name: Run dbt CI/CD on Databricks
+# ==============================================================================
+# PIPELINE METADATA & TRIGGERS CONFIGURATION
+# ==============================================================================
+name: dbt CI/CD Multi-Environment Pipeline
 
+# Yeh section define karta hai ki yeh GitHub Actions workflow kab-kab trigger hoga.
+# Jab bhi developer 'main' (Prod), 'uat' (Staging), ya 'dev' (Development) branch par 
+# code push karega, ya in branches ke liye Pull Request (PR) raise karega, tab yeh run hogi.
 on:
   push:
-    branches: [ main ]
+    branches: [ main, uat, dev ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, uat, dev ]
 
+# ==============================================================================
+# JOBS & EXECUTION ENVIRONMENT CONFIGURATION
+# ==============================================================================
 jobs:
-  dbt_run_and_test:
+  dbt_ci_cd:
+    # GitHub ka managed cloud virtual server (latest Ubuntu environment) allocate hota hai
+    # jahan hamara dbt execution aur testing process run hoga.
     runs-on: ubuntu-latest
 
     steps:
+      # Step 1: Code Checkout
+      # GitHub repository se current branch ka sara code (models, tests, configs) 
+      # virtual server par download/clone kiya jata hai taki pipeline use access kar sake.
       - name: Checkout code
         uses: actions/checkout@v3
 
+      # Step 2: Python Setup
+      # dbt-core Python par chalta hai, isliye server par specific Python version (3.10) 
+      # setup kiya ja raha hai taaki compatibility issues na aayein.
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
+      # Step 3: Dependencies Installation
+      # Python package manager (pip) ko update karke dbt-core aur Databricks adapter 
+      # (dbt-databricks) ko server par fresh install kiya jata hai.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install dbt-core dbt-databricks
 
-      - name: Run dbt Tests & Models
+      # Step 4: Dynamic Target Environment Mapping Logic (Dev, UAT, Prod)
+      # Yeh step check karta hai ki current execution kis Git branch par ho raha hai:
+      # - Agar branch 'main' hai, toh production target aur production catalogs/schemas set honge.
+      # - Agar branch 'uat' hai, toh uat target aur UAT catalogs/schemas set honge.
+      # - Agar branch 'dev' ya koi aur feature branch hai, toh standard 'dev' target use hoga.
+      - name: Determine Target Environment
+        id: set-env
+        run: |
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "TARGET_ENV=prod" >> $GITHUB_ENV
+            echo "DBT_CATALOG=dbt_catalogue_prod" >> $GITHUB_ENV
+            echo "DBT_SCHEMA=dbt_schema_prod" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" == "refs/heads/uat" ]; then
+            echo "TARGET_ENV=uat" >> $GITHUB_ENV
+            echo "DBT_CATALOG=dbt_catalogue_uat" >> $GITHUB_ENV
+            echo "DBT_SCHEMA=dbt_schema_uat" >> $GITHUB_ENV
+          else
+            echo "TARGET_ENV=dev" >> $GITHUB_ENV
+            echo "DBT_CATALOG=dbt_catalogue_dev" >> $GITHUB_ENV
+            echo "DBT_SCHEMA=dbt_schema_dev" >> $GITHUB_ENV
+          fi
+
+      # Step 5: Secure Profiles Configuration Generation
+      # Yeh step GitHub Repository Secrets se sensitive credentials (Host, HTTP Path, Token) 
+      # securely read karke runtime par ~/.dbt/profiles.yml file generate karta hai.
+      # Isme dev, uat, aur prod teeno outputs properly configured hain.
+      - name: Configure dbt Profiles
         env:
           DBT_DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DBT_DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
@@ -33,17 +79,46 @@ jobs:
           mkdir -p ~/.dbt
           echo "
           my_dbtricks_project:
-            target: ci
+            target: ${{ env.TARGET_ENV }}
             outputs:
-              ci:
+              dev:
                 type: databricks
                 method: token
                 host: '${{ secrets.DATABRICKS_HOST }}'
                 http_path: '${{ secrets.DATABRICKS_HTTP_PATH }}'
                 token: '${{ secrets.DATABRICKS_TOKEN }}'
-                catalog: dbt_catalogue
-                schema: dbt_schema
+                catalog: '${{ env.DBT_CATALOG }}'
+                schema: '${{ env.DBT_SCHEMA }}'
+                threads: 4
+              uat:
+                type: databricks
+                method: token
+                host: '${{ secrets.DATABRICKS_HOST }}'
+                http_path: '${{ secrets.DATABRICKS_HTTP_PATH }}'
+                token: '${{ secrets.DATABRICKS_TOKEN }}'
+                catalog: '${{ env.DBT_CATALOG }}'
+                schema: '${{ env.DBT_SCHEMA }}'
+                threads: 4
+              prod:
+                type: databricks
+                method: token
+                host: '${{ secrets.DATABRICKS_HOST }}'
+                http_path: '${{ secrets.DATABRICKS_HTTP_PATH }}'
+                token: '${{ secrets.DATABRICKS_TOKEN }}'
+                catalog: '${{ env.DBT_CATALOG }}'
+                schema: '${{ env.DBT_SCHEMA }}'
                 threads: 4
           " > ~/.dbt/profiles.yml
+
+      # Step 6: Execution and Quality Testing
+      # Databricks SQL Warehouse par dbt models ko execute ('dbt run') karke tables/views banata hai,
+      # aur uske baad saare data quality tests ('dbt test') run karta hai. 
+      # Agar koi bhi test fail hota hai, toh pipeline red error ke sath stop ho jayegi.
+      - name: Run dbt Compile & Test
+        env:
+          DBT_DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DBT_DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DBT_DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
           dbt run
           dbt test
