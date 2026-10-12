@@ -1,4 +1,4 @@
-order_id,customer_id,order_date,status
-101,1,2026-01-01,completed
-102,2,2026-01-02,shipped
-103,1,2026-01-03,processing
+order_id,customer_id,order_date,status,amount
+101,1,2026-01-01,completed,150.00
+102,2,2026-01-02,shipped,200.00
+103,1,2026-01-03,processing,75.50
