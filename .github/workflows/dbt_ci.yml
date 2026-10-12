@@ -1,0 +1,49 @@
+name: Run dbt CI/CD on Databricks
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  dbt_run_and_test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install dbt-core dbt-databricks
+
+      - name: Run dbt Tests & Models
+        env:
+          DBT_DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DBT_DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DBT_DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          mkdir -p ~/.dbt
+          echo "
+          my_databricks_project:
+            target: ci
+            outputs:
+              ci:
+                type: databricks
+                method: token
+                host: '${{ secrets.DATABRICKS_HOST }}'
+                http_path: '${{ secrets.DATABRICKS_HTTP_PATH }}'
+                token: '${{ secrets.DATABRICKS_TOKEN }}'
+                catalog: dbt_catalogue
+                schema: dbt_schema
+                threads: 4
+          " > ~/.dbt/profiles.yml
+          dbt run
+          dbt test
