@@ -1,30 +1,52 @@
-name: Run dbt CI/CD on Databricks
+# ==============================================================================
+# PIPELINE METADATA & TRIGGERS CONFIGURATION
+# ==============================================================================
+name: dbt CI/CD Multi-Environment Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, uat, dev ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, uat, dev ]
 
+# ==============================================================================
+# JOBS & EXECUTION ENVIRONMENT CONFIGURATION
+# ==============================================================================
 jobs:
-  dbt_run_and_test:
+  dbt_ci_cd:
     runs-on: ubuntu-latest
 
     steps:
+      # Step 1: Code Checkout
       - name: Checkout code
         uses: actions/checkout@v3
 
+      # Step 2: Python Setup
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
+      # Step 3: Dependencies Installation
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install dbt-core dbt-databricks
 
-      - name: Run dbt Tests & Models
+      # Step 4: Determine Target Environment (Sirf target select karega)
+      - name: Determine Target Environment
+        id: set-env
+        run: |
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "TARGET_ENV=prod" >> $GITHUB_ENV
+          elif [ "${{ github.ref }}" == "refs/heads/uat" ]; then
+            echo "TARGET_ENV=uat" >> $GITHUB_ENV
+          else
+            echo "TARGET_ENV=dev" >> $GITHUB_ENV
+          fi
+
+      # Step 5: Secure Profiles Configuration Generation with Hardcoded Values
+      - name: Configure dbt Profiles
         env:
           DBT_DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DBT_DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
@@ -33,17 +55,40 @@ jobs:
           mkdir -p ~/.dbt
           echo "
           my_dbtricks_project:
-            target: ci
+            target: '${{ env.TARGET_ENV }}'
             outputs:
-              ci:
+              dev:
                 type: databricks
                 method: token
                 host: '${{ secrets.DATABRICKS_HOST }}'
                 http_path: '${{ secrets.DATABRICKS_HTTP_PATH }}'
                 token: '${{ secrets.DATABRICKS_TOKEN }}'
-                catalog: dbt_catalogue
-                schema: dbt_schema
+                catalog: 'dbt_catalogue_dev'
+                schema: 'dbt_schema_dev'
+                threads: 4
+              uat:
+                type: databricks
+                method: token
+                host: '${{ secrets.DATABRICKS_HOST }}'
+                http_path: '${{ secrets.DATABRICKS_HTTP_PATH }}'
+                token: '${{ secrets.DATABRICKS_TOKEN }}'
+                catalog: 'dbt_catalogue_uat'
+                schema: 'dbt_schema_uat'
+                threads: 4
+              prod:
+                type: databricks
+                method: token
+                host: '${{ secrets.DATABRICKS_HOST }}'
+                http_path: '${{ secrets.DATABRICKS_HTTP_PATH }}'
+                token: '${{ secrets.DATABRICKS_TOKEN }}'
+                catalog: 'dbt_catalogue_prod'
+                schema: 'dbt_schema_prod'
                 threads: 4
           " > ~/.dbt/profiles.yml
+
+      # Step 6: Execution and Quality Testing
+      - name: Run dbt Compile & Test
+        run: |
+          dbt seed
           dbt run
           dbt test
