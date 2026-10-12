@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: stg_orders
+    columns:
+      - name: order_id
+        tests:
+          - unique
+          - not_null
+
+      - name: status
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['completed', 'returned', 'pending']
+
+  - name: stg_customers
+    columns:
+      - name: customer_id
+        tests:
+          - unique
+          - not_null
+
+  - name: customer_sales_summary
+    columns:
+      - name: customer_id
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('stg_customers')
+              field: customer_id
+
+      - name: total_spent
+        tests:
+          - not_null
