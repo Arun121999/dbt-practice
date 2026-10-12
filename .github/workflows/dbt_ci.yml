@@ -89,5 +89,6 @@ jobs:
       # Step 6: Execution and Quality Testing
       - name: Run dbt Compile & Test
         run: |
+          dbt seed
           dbt run
           dbt test
